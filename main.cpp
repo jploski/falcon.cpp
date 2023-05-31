@@ -19,12 +19,12 @@
 #endif
 
 struct bloom_hparams {
-    int32_t n_vocab = 32000;
+    int32_t n_vocab = 65024;
     int32_t n_ctx   = 512;   // this is provided as user input?
-    int32_t n_embd  = 4096;
-    int32_t n_mult  = 256;
-    int32_t n_head  = 32;
-    int32_t n_layer = 32;
+    int32_t n_embd  = 8192;
+    int32_t n_mult  = 1;
+    int32_t n_head  = 128;
+    int32_t n_layer = 60;
     int32_t f16     = 1;
 };
 
@@ -35,9 +35,7 @@ struct bloom_layer {
 
     // attention
     struct ggml_tensor * query_key_value;
-    struct ggml_tensor * query_key_value_b;
     struct ggml_tensor * wo;
-    struct ggml_tensor * wo_b;
 
     // normalization
     struct ggml_tensor * ffn_norm;
@@ -45,9 +43,7 @@ struct bloom_layer {
 
     // ff
     struct ggml_tensor * w1;
-    struct ggml_tensor * w1_b;
     struct ggml_tensor * w2;
-    struct ggml_tensor * w2_b;
 };
 
 struct bloom_model {
@@ -195,18 +191,14 @@ bool bloom_model_load(const std::string & fname, bloom_model & model, gpt_vocab 
         ctx_size += n_layer*(n_embd*ggml_type_sizef(GGML_TYPE_F32)); // attention_norm
         ctx_size += n_layer*(n_embd*ggml_type_sizef(GGML_TYPE_F32)); // attention_norm_b
 
-        ctx_size += n_layer*(3*n_embd*n_embd*ggml_type_sizef(wtype)); // query_key_value
-        ctx_size += n_layer*(3*n_embd*ggml_type_sizef(GGML_TYPE_F32)); // query_key_value_b
+        ctx_size += n_layer*(9216*n_embd*ggml_type_sizef(wtype)); // query_key_value
         ctx_size += n_layer*(n_embd*n_embd*ggml_type_sizef(wtype)); // wo
-        ctx_size += n_layer*(n_embd*ggml_type_sizef(GGML_TYPE_F32)); // wo_b
 
         ctx_size += n_layer*(n_embd*ggml_type_sizef(GGML_TYPE_F32)); // ffn_norm
         ctx_size += n_layer*(n_embd*ggml_type_sizef(GGML_TYPE_F32)); // ffn_norm_b
 
         ctx_size += n_layer*(n_ff*n_embd*ggml_type_sizef(wtype)); // w1
-        ctx_size += n_layer*(n_ff*ggml_type_sizef(GGML_TYPE_F32)); // w1_b
         ctx_size += n_layer*(n_ff*n_embd*ggml_type_sizef(wtype)); // w2
-        ctx_size += n_layer*(n_ff*ggml_type_sizef(GGML_TYPE_F32)); // w2_b
 
         ctx_size += n_ctx*n_layer*n_embd*ggml_type_sizef(GGML_TYPE_F32); // memory_k
         ctx_size += n_ctx*n_layer*n_embd*ggml_type_sizef(GGML_TYPE_F32); // memory_v
@@ -264,35 +256,27 @@ bool bloom_model_load(const std::string & fname, bloom_model & model, gpt_vocab 
             layer.attention_norm = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
             layer.attention_norm_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
 
-            layer.query_key_value = ggml_new_tensor_2d(ctx, wtype, n_embd, 3*n_embd);
-            layer.query_key_value_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 3*n_embd);
+            layer.query_key_value = ggml_new_tensor_2d(ctx, wtype, n_embd, 9216);
             layer.wo = ggml_new_tensor_2d(ctx, wtype, n_embd, n_embd);
-            layer.wo_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
 
             layer.ffn_norm = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
             layer.ffn_norm_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
 
             layer.w1 = ggml_new_tensor_2d(ctx, wtype, n_embd,   n_ff);
-            layer.w1_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_ff);
             layer.w2 = ggml_new_tensor_2d(ctx, wtype,   n_ff, n_embd);
-            layer.w2_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
 
             // map by name
             model.tensors["layers." + std::to_string(i) + ".attention_norm.weight"] = layer.attention_norm;
             model.tensors["layers." + std::to_string(i) + ".attention_norm.bias"] = layer.attention_norm_b;
 
             model.tensors["layers." + std::to_string(i) + ".attention.query_key_value.weight"] = layer.query_key_value;
-            model.tensors["layers." + std::to_string(i) + ".attention.query_key_value.bias"] = layer.query_key_value_b;
             model.tensors["layers." + std::to_string(i) + ".attention.wo.weight"] = layer.wo;
-            model.tensors["layers." + std::to_string(i) + ".attention.wo.bias"] = layer.wo_b;
 
             model.tensors["layers." + std::to_string(i) + ".ffn_norm.weight"] = layer.ffn_norm;
             model.tensors["layers." + std::to_string(i) + ".ffn_norm.bias"] = layer.ffn_norm_b;
 
             model.tensors["layers." + std::to_string(i) + ".feed_forward.w1.weight"] = layer.w1;
-            model.tensors["layers." + std::to_string(i) + ".feed_forward.w1.bias"] = layer.w1_b;
             model.tensors["layers." + std::to_string(i) + ".feed_forward.w2.weight"] = layer.w2;
-            model.tensors["layers." + std::to_string(i) + ".feed_forward.w2.bias"] = layer.w2_b;
         }
     }
 
@@ -405,11 +389,13 @@ bool bloom_model_load(const std::string & fname, bloom_model & model, gpt_vocab 
                 auto tensor = model.tensors[name.data()];
 
                 if (n_dims == 1) {
+                    printf("%s[%d] = %d\n", name.data(), i, ne[0]);
                     if (ggml_nelements(tensor) != nelements) {
                         fprintf(stderr, "%s: tensor '%s' has wrong size in model file\n", __func__, name.data());
                         return false;
                     }
                 } else {
+                    printf("%s[%d] = %d x %d\n", name.data(), i, ne[0], ne[1]);
                     if (ggml_nelements(tensor)/n_parts != nelements) {
                         fprintf(stderr, "%s: tensor '%s' has wrong size in model file\n", __func__, name.data());
                         return false;
@@ -611,9 +597,9 @@ bool bloom_eval(
         {
             cur = ggml_mul_mat(ctx0,model.layers[il].query_key_value, cur);
 
-            cur = ggml_add(ctx0,
-                    ggml_repeat(ctx0, model.layers[il].query_key_value_b, cur),
-                    cur);
+            // cur = ggml_add(ctx0,
+            //         ggml_repeat(ctx0, model.layers[il].query_key_value_b, cur),
+            //         cur);
         }
 
         // cur = ggml_debug(ctx0, cur);
@@ -693,10 +679,12 @@ bool bloom_eval(
             cur = ggml_mul_mat(ctx0,
                     model.layers[il].wo,
                     cur);
-            cur = ggml_add(ctx0, ggml_repeat(ctx0, model.layers[il].wo_b, cur), cur);
+            // cur = ggml_add(ctx0, ggml_repeat(ctx0, model.layers[il].wo_b, cur), cur);
         }
 
-        struct ggml_tensor * inpFF = ggml_add(ctx0, cur, inpSA);
+        // struct ggml_tensor * inpFF = ggml_add(ctx0, cur, inpSA);
+        struct ggml_tensor * inpFF = inpSA;
+        struct ggml_tensor * attn_out = ggml_cpy(ctx0, cur, ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_embd, N));
 
         // feed-forward network
         {
@@ -714,17 +702,19 @@ bool bloom_eval(
             cur = ggml_mul_mat(ctx0,
                     model.layers[il].w1,
                     cur);
-            cur = ggml_add(ctx0, ggml_repeat(ctx0, model.layers[il].w1_b, cur), cur);
+            // cur = ggml_add(ctx0, ggml_repeat(ctx0, model.layers[il].w1_b, cur), cur);
 
             cur = ggml_gelu(ctx0, cur);
 
             cur = ggml_mul_mat(ctx0,
                     model.layers[il].w2,
                     cur);
-            cur = ggml_add(ctx0, ggml_repeat(ctx0, model.layers[il].w2_b, cur), cur);
+            // cur = ggml_add(ctx0, ggml_repeat(ctx0, model.layers[il].w2_b, cur), cur);
         }
 
-        cur  = ggml_add(ctx0, cur, inpFF);
+        // cur  = ggml_add(ctx0, cur, inpFF);
+        cur = ggml_add(ctx0, cur, attn_out);
+        cur = ggml_add(ctx0, cur, inpL);
 
         // input for next layer
         inpL = cur;

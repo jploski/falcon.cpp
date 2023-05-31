@@ -22,10 +22,10 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, BloomF
 conv_map = {
     'word_embeddings'       : 'tok_embeddings',
     "word_embeddings_layernorm": 'norm',
-        'input_layernorm'        : 'attention_norm',
+        'ln_attn'        : 'attention_norm',
         'self_attention.query_key_value': 'attention.query_key_value',
         'self_attention.dense':          'attention.wo',
-        'post_attention_layernorm': 'ffn_norm',
+        'ln_mlp': 'ffn_norm',
         'mlp.dense_h_to_4h'           : 'feed_forward.w1',
         'mlp.dense_4h_to_h'           : 'feed_forward.w2',
         'ln_f'                        : 'output_norm',
@@ -78,10 +78,10 @@ if len(sys.argv) > 3:
     ftype = 0
 
 tokenizer = AutoTokenizer.from_pretrained(model_name)
-config = AutoConfig.from_pretrained(model_name)
+config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
 hparams = config.to_dict()
 print("Loading model: ", model_name)
-model = AutoModelForCausalLM.from_pretrained(model_name, config=config, torch_dtype=torch.float16 if ftype == 1 else torch.float32, low_cpu_mem_usage=True)
+model = AutoModelForCausalLM.from_pretrained(model_name, config=config, torch_dtype=torch.float16 if ftype == 1 else torch.float32, low_cpu_mem_usage=True, trust_remote_code=True)
 print("Model loaded: ", model_name)
 
 
