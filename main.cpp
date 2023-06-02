@@ -50,11 +50,11 @@ struct bloom_model {
     bloom_hparams hparams;
 
     struct ggml_tensor * tok_embeddings;
-    struct ggml_tensor * norm;
-    struct ggml_tensor * norm_b;
+    // struct ggml_tensor * norm;
+    // struct ggml_tensor * norm_b;
 
-    struct ggml_tensor * output_norm;
-    struct ggml_tensor * output_norm_b;
+    // struct ggml_tensor * output_norm;
+    // struct ggml_tensor * output_norm_b;
     struct ggml_tensor * output;
     
 
@@ -180,11 +180,11 @@ bool bloom_model_load(const std::string & fname, bloom_model & model, gpt_vocab 
 
         ctx_size += n_embd*n_vocab*ggml_type_sizef(wtype); // tok_embeddings
 
-        ctx_size += n_embd*ggml_type_sizef(GGML_TYPE_F32); // norm
-        ctx_size += n_embd*ggml_type_sizef(GGML_TYPE_F32); // norm_b
+        // ctx_size += n_embd*ggml_type_sizef(GGML_TYPE_F32); // norm
+        // ctx_size += n_embd*ggml_type_sizef(GGML_TYPE_F32); // norm_b
 
-        ctx_size += n_embd*ggml_type_sizef(GGML_TYPE_F32); // output_norm
-        ctx_size += n_embd*ggml_type_sizef(GGML_TYPE_F32); // output_norm_b
+        // ctx_size += n_embd*ggml_type_sizef(GGML_TYPE_F32); // output_norm
+        // ctx_size += n_embd*ggml_type_sizef(GGML_TYPE_F32); // output_norm_b
 
         ctx_size += n_embd*n_vocab*ggml_type_sizef(wtype); // output
 
@@ -234,20 +234,20 @@ bool bloom_model_load(const std::string & fname, bloom_model & model, gpt_vocab 
         model.layers.resize(n_layer);
 
         model.tok_embeddings = ggml_new_tensor_2d(ctx, wtype, n_embd, n_vocab);
-        model.norm   = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
-        model.norm_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
+        // model.norm   = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
+        // model.norm_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
 
-        model.output_norm = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
-        model.output_norm_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
+        // model.output_norm = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
+        // model.output_norm_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
         model.output = ggml_new_tensor_2d(ctx, wtype,         n_embd, n_vocab);
 
         // map by name
         model.tensors["tok_embeddings.weight"] = model.tok_embeddings;
-        model.tensors["norm.weight"]   = model.norm;
-        model.tensors["norm.bias"]   = model.norm_b;
+        // model.tensors["norm.weight"]   = model.norm;
+        // model.tensors["norm.bias"]   = model.norm_b;
         
-        model.tensors["output_norm.weight"] = model.output_norm;
-        model.tensors["output_norm.bias"] = model.output_norm_b;
+        // model.tensors["output_norm.weight"] = model.output_norm;
+        // model.tensors["output_norm.bias"] = model.output_norm_b;
         model.tensors["output.weight"] = model.output;
 
         for (int i = 0; i < n_layer; ++i) {
@@ -525,8 +525,7 @@ bool bloom_eval(
         const int n_threads,
         const int n_past,
         const std::vector<gpt_vocab::id> & embd_inp,
-              std::vector<float>         & embd_w,
-              size_t                     & mem_per_token) {
+              std::vector<float>         & embd_w) {
 
     const int N = embd_inp.size();
 
@@ -543,19 +542,6 @@ bool bloom_eval(
     static size_t buf_size = 512u*1024*1024;
     static void * buf = malloc(buf_size);
 
-    if (mem_per_token > 0 && mem_per_token*N > buf_size) {
-        const size_t buf_size_new = 1.1*(mem_per_token*N); // add 10% to account for ggml object overhead
-        //printf("\n%s: reallocating buffer from %zu to %zu bytes\n", __func__, buf_size, buf_size_new);
-
-        // reallocate
-        buf_size = buf_size_new;
-        buf = realloc(buf, buf_size);
-        if (buf == nullptr) {
-            fprintf(stderr, "%s: failed to allocate %zu bytes\n", __func__, buf_size);
-            return false;
-        }
-    }
-
     struct ggml_init_params params = {
         .mem_size   = buf_size,
         .mem_buffer = buf,
@@ -565,17 +551,22 @@ bool bloom_eval(
     ggml_cgraph gf = {};
     gf.n_threads = n_threads;
 
+    printf("input tokens: %d\n", N);
+    for (int i = 0; i < N; ++i) {
+        printf("%d ", embd_inp[i]);
+    }
+
     struct ggml_tensor * embd = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, N);
     memcpy(embd->data, embd_inp.data(), N*ggml_element_size(embd));
 
     struct ggml_tensor * inpL = ggml_get_rows(ctx0, model.tok_embeddings, embd);
 
     // word embeddings norm
-    {
-        inpL = ggml_norm(ctx0, inpL);
-        inpL = ggml_mul(ctx0, ggml_repeat(ctx0, model.norm, inpL), inpL);
-        inpL = ggml_add(ctx0, ggml_repeat(ctx0, model.norm_b, inpL), inpL);
-    }
+    // {
+    //     inpL = ggml_norm(ctx0, inpL);
+    //     inpL = ggml_mul(ctx0, ggml_repeat(ctx0, model.norm, inpL), inpL);
+    //     inpL = ggml_add(ctx0, ggml_repeat(ctx0, model.norm_b, inpL), inpL);
+    // }
 
     for (int il = 0; il < n_layer; ++il) {
         struct ggml_tensor * inpSA = inpL; //TODO: copy?
@@ -721,16 +712,15 @@ bool bloom_eval(
     }
 
     // norm
-    {
-        inpL = ggml_norm(ctx0, inpL);
-
-        // inpL = norm*inpL
-        inpL = ggml_mul(ctx0,
-                    ggml_repeat(ctx0, model.output_norm, inpL),
-                    inpL);
-        
-        inpL = ggml_add(ctx0, ggml_repeat(ctx0, model.output_norm_b, inpL), inpL);
-    }
+    // {
+    //     inpL = ggml_norm(ctx0, inpL);
+    //     // inpL = norm*inpL
+    //     inpL = ggml_mul(ctx0,
+    //                 ggml_repeat(ctx0, model.output_norm, inpL),
+    //                 inpL);
+    //     
+    //     inpL = ggml_add(ctx0, ggml_repeat(ctx0, model.output_norm_b, inpL), inpL);
+    // }
 
     // lm_head
     {
@@ -755,10 +745,6 @@ bool bloom_eval(
     // return result for just the last token
     embd_w.resize(n_vocab);
     memcpy(embd_w.data(), (float *) ggml_get_data(inpL) + (n_vocab*(N-1)), sizeof(float)*n_vocab);
-
-    if (mem_per_token == 0) {
-        mem_per_token = ggml_used_mem(ctx0)/N;
-    }
     //printf("used_mem = %zu\n", ggml_used_mem(ctx0));
 
     ggml_free(ctx0);
@@ -834,8 +820,8 @@ int main(int argc, char ** argv) {
     std::vector<gpt_vocab::id> embd;
 
     // determine the required inference memory per token:
-    size_t mem_per_token = 0;
-    bloom_eval(model, params.n_threads, 0, { 0, 1, 2, 3 }, logits, mem_per_token);
+    // size_t mem_per_token = 0;
+    // bloom_eval(model, params.n_threads, 0, { 0, 1, 2, 3 }, logits, mem_per_token);
 
     int last_n_size = params.repeat_last_n;
     std::vector<gpt_vocab::id> last_n_tokens(last_n_size);
@@ -846,7 +832,7 @@ int main(int argc, char ** argv) {
         if (embd.size() > 0) {
             const int64_t t_start_us = ggml_time_us();
 
-            if (!bloom_eval(model, params.n_threads, n_past, embd, logits, mem_per_token)) { // update logits
+            if (!bloom_eval(model, params.n_threads, n_past, embd, logits)) { // update logits
                 printf("Failed to predict\n");
                 return 1;
             }
@@ -914,7 +900,6 @@ int main(int argc, char ** argv) {
         const int64_t t_main_end_us = ggml_time_us();
 
         printf("\n\n");
-        printf("%s: mem per token = %8zu bytes\n", __func__, mem_per_token);
         printf("%s:     load time = %8.2f ms\n", __func__, t_load_us/1000.0f);
         printf("%s:   sample time = %8.2f ms\n", __func__, t_sample_us/1000.0f);
         printf("%s:  predict time = %8.2f ms / %.2f ms per token\n", __func__, t_predict_us/1000.0f, t_predict_us/1000.0f/n_past);

@@ -21,16 +21,16 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, BloomF
 
 conv_map = {
     'word_embeddings'       : 'tok_embeddings',
-    "word_embeddings_layernorm": 'norm',
-        'ln_attn'        : 'attention_norm',
-        'self_attention.query_key_value': 'attention.query_key_value',
-        'self_attention.dense':          'attention.wo',
-        'ln_mlp': 'ffn_norm',
-        'mlp.dense_h_to_4h'           : 'feed_forward.w1',
-        'mlp.dense_4h_to_h'           : 'feed_forward.w2',
-        'ln_f'                        : 'output_norm',
-        'lm_head' : 'output',
-        }
+    # "word_embeddings_layernorm": 'norm',
+    'ln_attn'        : 'attention_norm',
+    'self_attention.query_key_value': 'attention.query_key_value',
+    'self_attention.dense':          'attention.wo',
+    'ln_mlp': 'ffn_norm',
+    'mlp.dense_h_to_4h'           : 'feed_forward.w1',
+    'mlp.dense_4h_to_h'           : 'feed_forward.w2',
+    # 'ln_f'                        : 'output_norm',
+    'lm_head' : 'output',
+}
 
 # ref: https://github.com/openai/gpt-2/blob/master/src/encoder.py
 def bytes_to_unicode():
@@ -145,7 +145,7 @@ for name in list_vars.keys():
     fout.write(struct.pack("iii", n_dims, len(str), ftype_cur))
     for i in range(n_dims):
         fout.write(struct.pack("i", data.shape[n_dims - 1 - i]))
-    fout.write(str);
+    fout.write(str)
 
     # data
     data.tofile(fout)
