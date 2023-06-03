@@ -22,13 +22,13 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, BloomF
 conv_map = {
     'word_embeddings'       : 'tok_embeddings',
     # "word_embeddings_layernorm": 'norm',
-    'ln_attn'        : 'attention_norm',
+    'input_layernorm'        : 'attention_norm',
     'self_attention.query_key_value': 'attention.query_key_value',
     'self_attention.dense':          'attention.wo',
     'ln_mlp': 'ffn_norm',
     'mlp.dense_h_to_4h'           : 'feed_forward.w1',
     'mlp.dense_4h_to_h'           : 'feed_forward.w2',
-    # 'ln_f'                        : 'output_norm',
+    'ln_f'                        : 'output_norm',
     'lm_head' : 'output',
 }
 
@@ -122,9 +122,9 @@ for name in list_vars.keys():
         mapped = conv_map[".".join(nn[:-1])]
         name = ".".join([mapped] + nn[-1:])
 
-    if "query_key_value" in src:
-        q, k, v = list_vars[src].reshape(config.n_head, 3, -1).unbind(1)
-        list_vars[src] = torch.cat([q, k, v], dim=0).reshape_as(list_vars[src])
+#    if "query_key_value" in src:
+#        q, k, v = list_vars[src].reshape(config.n_head, 3, -1).unbind(1)
+#        list_vars[src] = torch.cat([q, k, v], dim=0).reshape_as(list_vars[src])
 
     print(src, ' -> ', name)
     data = list_vars[src].squeeze().numpy()
