@@ -53,8 +53,8 @@ struct bloom_model {
     // struct ggml_tensor * norm;
     // struct ggml_tensor * norm_b;
 
-    // struct ggml_tensor * output_norm;
-    // struct ggml_tensor * output_norm_b;
+    struct ggml_tensor * output_norm;
+    struct ggml_tensor * output_norm_b;
     struct ggml_tensor * output;
     
 
@@ -174,6 +174,7 @@ bool bloom_model_load(const std::string & fname, bloom_model & model, gpt_vocab 
         const auto & hparams = model.hparams;
 
         const int n_embd  = hparams.n_embd;
+        const int n_head  = hparams.n_head;
         const int n_layer = hparams.n_layer;
         const int n_ctx   = hparams.n_ctx;
         const int n_vocab = hparams.n_vocab;
@@ -183,15 +184,15 @@ bool bloom_model_load(const std::string & fname, bloom_model & model, gpt_vocab 
         // ctx_size += n_embd*ggml_type_sizef(GGML_TYPE_F32); // norm
         // ctx_size += n_embd*ggml_type_sizef(GGML_TYPE_F32); // norm_b
 
-        // ctx_size += n_embd*ggml_type_sizef(GGML_TYPE_F32); // output_norm
-        // ctx_size += n_embd*ggml_type_sizef(GGML_TYPE_F32); // output_norm_b
+        ctx_size += n_embd*ggml_type_sizef(GGML_TYPE_F32); // output_norm
+        ctx_size += n_embd*ggml_type_sizef(GGML_TYPE_F32); // output_norm_b
 
         ctx_size += n_embd*n_vocab*ggml_type_sizef(wtype); // output
 
         ctx_size += n_layer*(n_embd*ggml_type_sizef(GGML_TYPE_F32)); // attention_norm
         ctx_size += n_layer*(n_embd*ggml_type_sizef(GGML_TYPE_F32)); // attention_norm_b
 
-        ctx_size += n_layer*(9216*n_embd*ggml_type_sizef(wtype)); // query_key_value
+        ctx_size += n_layer*(n_embd*(n_embd+2*(n_embd/n_head))*ggml_type_sizef(wtype)); // query_key_value
         ctx_size += n_layer*(n_embd*n_embd*ggml_type_sizef(wtype)); // wo
 
         ctx_size += n_layer*(n_embd*ggml_type_sizef(GGML_TYPE_F32)); // ffn_norm
@@ -227,6 +228,7 @@ bool bloom_model_load(const std::string & fname, bloom_model & model, gpt_vocab 
         const auto & hparams = model.hparams;
 
         const int n_embd  = hparams.n_embd;
+        const int n_head  = hparams.n_head;
         const int n_layer = hparams.n_layer;
         const int n_ctx   = hparams.n_ctx;
         const int n_vocab = hparams.n_vocab;
@@ -237,8 +239,8 @@ bool bloom_model_load(const std::string & fname, bloom_model & model, gpt_vocab 
         // model.norm   = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
         // model.norm_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
 
-        // model.output_norm = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
-        // model.output_norm_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
+        model.output_norm = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
+        model.output_norm_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
         model.output = ggml_new_tensor_2d(ctx, wtype,         n_embd, n_vocab);
 
         // map by name
@@ -246,8 +248,8 @@ bool bloom_model_load(const std::string & fname, bloom_model & model, gpt_vocab 
         // model.tensors["norm.weight"]   = model.norm;
         // model.tensors["norm.bias"]   = model.norm_b;
         
-        // model.tensors["output_norm.weight"] = model.output_norm;
-        // model.tensors["output_norm.bias"] = model.output_norm_b;
+        model.tensors["output_norm.weight"] = model.output_norm;
+        model.tensors["output_norm.bias"] = model.output_norm_b;
         model.tensors["output.weight"] = model.output;
 
         for (int i = 0; i < n_layer; ++i) {
@@ -256,7 +258,8 @@ bool bloom_model_load(const std::string & fname, bloom_model & model, gpt_vocab 
             layer.attention_norm = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
             layer.attention_norm_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
 
-            layer.query_key_value = ggml_new_tensor_2d(ctx, wtype, n_embd, 9216);
+            // query_key_value shape for config.multi_query == True:
+            layer.query_key_value = ggml_new_tensor_2d(ctx, wtype, n_embd, n_embd + 2 * (n_embd / n_head)); 
             layer.wo = ggml_new_tensor_2d(ctx, wtype, n_embd, n_embd);
 
             layer.ffn_norm = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
@@ -551,10 +554,10 @@ bool bloom_eval(
     ggml_cgraph gf = {};
     gf.n_threads = n_threads;
 
-    printf("input tokens: %d\n", N);
-    for (int i = 0; i < N; ++i) {
-        printf("%d ", embd_inp[i]);
-    }
+//    printf("input tokens: %d\n", N);
+//    for (int i = 0; i < N; ++i) {
+//        printf("%d ", embd_inp[i]);
+//    }
 
     struct ggml_tensor * embd = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, N);
     memcpy(embd->data, embd_inp.data(), N*ggml_element_size(embd));
@@ -568,12 +571,12 @@ bool bloom_eval(
     //     inpL = ggml_add(ctx0, ggml_repeat(ctx0, model.norm_b, inpL), inpL);
     // }
 
-    for (int il = 0; il < n_layer; ++il) {
+    for (int il = 0; il < 1 /*TODO: replace 1 with n_layer after porting complete! */; ++il) {
         struct ggml_tensor * inpSA = inpL; //TODO: copy?
 
         struct ggml_tensor * cur;
 
-        // norm
+        // layernorm_output = self.input_layernorm(hidden_states)
         {
             cur = ggml_norm(ctx0, inpL);
 
@@ -584,7 +587,7 @@ bool bloom_eval(
             cur = ggml_add(ctx0, ggml_repeat(ctx0, model.layers[il].attention_norm_b, cur), cur);
         }
 
-        // attn
+        // fused_qkv = self.query_key_value(hidden_states)
         {
             cur = ggml_mul_mat(ctx0,model.layers[il].query_key_value, cur);
 
@@ -597,20 +600,56 @@ bool bloom_eval(
 
         // self-attention
         {
-            struct ggml_tensor * Qcur = ggml_view_2d(ctx0, cur, n_embd, N, cur->nb[1], 0*sizeof(float)*n_embd);
-            struct ggml_tensor * Kcur = ggml_view_2d(ctx0, cur, n_embd, N, cur->nb[1], 1*sizeof(float)*n_embd); //TODO: float or fp16?
-            struct ggml_tensor * Vcur = ggml_view_2d(ctx0, cur, n_embd, N, cur->nb[1], 2*sizeof(float)*n_embd);
+            // fused_qkv = fused_qkv.view(batch_size, seq_length, self.num_heads + 2, self.head_dim)
 
+            //struct ggml_tensor * fused_qkv_view = ggml_view_3d(ctx0, cur,
+            //    n_embd/n_head, n_head+2, N,
+            //    n_embd/n_head * sizeof(float), n_embd + 2 * (n_embd / n_head) * sizeof(float), 0);
+
+            size_t head_dim = n_embd/n_head;
+            size_t fused_qkv_row_nb = (n_embd + 2 * (n_embd / n_head)) * sizeof(float);
+
+
+            // (query_layer, key_layer, value_layer) = self._split_heads(fused_qkv)
+
+            struct ggml_tensor * Qcur = ggml_view_3d(ctx0, cur,
+                head_dim, n_head, N,
+                head_dim * sizeof(float), fused_qkv_row_nb, 0);
+
+            struct ggml_tensor * Kcur = ggml_view_3d(ctx0, cur,
+                head_dim, 1, N,
+                head_dim * sizeof(float), fused_qkv_row_nb,
+                n_embd * sizeof(float));
+
+            struct ggml_tensor * Vcur = ggml_view_3d(ctx0, cur,
+                head_dim, 1, N,
+                head_dim * sizeof(float), fused_qkv_row_nb,
+                (n_embd + head_dim) * sizeof(float));
+
+            // Example of how we can dump a tensor (Vcur) to stdout:
+            //    ggml_build_forward_expand(&gf, Vcur);
+            //    ggml_graph_compute(ctx0, &gf);
+            //    ggml_print_tensor_f32(Vcur);
+
+            // TODO: verified to match layer 0 data from falcon/modelling_RW.py up to this point
+            // That is, we stand here just before query_layer = query_layer.transpose(1, 2).reshape
+            // from falcon/modelling_RW.py
+                
             // store key and value to memory
             if (N >= 1) {
-                struct ggml_tensor * k = ggml_view_1d(ctx0, model.memory_k, N*n_embd, (ggml_element_size(model.memory_k)*n_embd)*(il*n_ctx + n_past));
-                struct ggml_tensor * v = ggml_view_1d(ctx0, model.memory_v, N*n_embd, (ggml_element_size(model.memory_v)*n_embd)*(il*n_ctx + n_past));
+                // TODO: something strange here, in originalv version Kcur, Vcur and model.memory_(k|v)
+                // has values for all heads, but in falcon/modelling_RW.py key_layer, value_layer only
+                // has space for one head?... probably related to the "multi_query" algorithm
+
+                struct ggml_tensor * k = ggml_view_1d(ctx0, model.memory_k, N*head_dim, (ggml_element_size(model.memory_k)*n_embd)*(il*n_ctx + n_past));
+                struct ggml_tensor * v = ggml_view_1d(ctx0, model.memory_v, N*head_dim, (ggml_element_size(model.memory_v)*n_embd)*(il*n_ctx + n_past));
 
                 ggml_build_forward_expand(&gf, ggml_cpy(ctx0, Kcur, k));
                 ggml_build_forward_expand(&gf, ggml_cpy(ctx0, Vcur, v));
             }
 
-            // Q = Qcur.contiguous().view(n_embd/n_head, n_head, N).permute(0, 2, 1, 3)
+            // TODO: UNVERIFIED from here on:
+
             struct ggml_tensor * Q =
                 ggml_permute(ctx0,
                             ggml_cpy(ctx0, Qcur,
@@ -712,15 +751,15 @@ bool bloom_eval(
     }
 
     // norm
-    // {
-    //     inpL = ggml_norm(ctx0, inpL);
-    //     // inpL = norm*inpL
-    //     inpL = ggml_mul(ctx0,
-    //                 ggml_repeat(ctx0, model.output_norm, inpL),
-    //                 inpL);
-    //     
-    //     inpL = ggml_add(ctx0, ggml_repeat(ctx0, model.output_norm_b, inpL), inpL);
-    // }
+    {
+        inpL = ggml_norm(ctx0, inpL);
+        // inpL = norm*inpL
+        inpL = ggml_mul(ctx0,
+                    ggml_repeat(ctx0, model.output_norm, inpL),
+                    inpL);
+        
+        inpL = ggml_add(ctx0, ggml_repeat(ctx0, model.output_norm_b, inpL), inpL);
+    }
 
     // lm_head
     {
@@ -786,8 +825,7 @@ int main(int argc, char ** argv) {
     // load the model
     {
         const int64_t t_start_us = ggml_time_us();
-        const int n_ctx = 512;
-        if (!bloom_model_load(params.model, model, vocab, n_ctx)) {  // TODO: set context from user input ??
+        if (!bloom_model_load(params.model, model, vocab, params.n_ctx)) {
             fprintf(stderr, "%s: failed to load model from '%s'\n", __func__, params.model.c_str());
             return 1;
         }
