@@ -3741,7 +3741,7 @@ void ggml_print_tensor_f32(const struct ggml_tensor *tensor) {
         GGML_PRINT("],\n");
     }
     if (ne2 < tensor->ne[2]) GGML_PRINT("  ...,\n");
-    fprintf(stderr, "]\n");
+    GGML_PRINT("]\n");
 }
 
 void ggml_print_object(const struct ggml_object * obj) {
