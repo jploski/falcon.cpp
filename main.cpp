@@ -630,10 +630,6 @@ bool bloom_eval(
             //    ggml_build_forward_expand(&gf, Vcur);
             //    ggml_graph_compute(ctx0, &gf);
             //    ggml_print_tensor_f32(Vcur);
-
-            // TODO: verified to match layer 0 data from falcon/modelling_RW.py up to this point
-            // That is, we stand here just before query_layer = query_layer.transpose(1, 2).reshape
-            // from falcon/modelling_RW.py
                 
             // store key and value to memory
             if (N >= 1) {
@@ -648,20 +644,57 @@ bool bloom_eval(
                 ggml_build_forward_expand(&gf, ggml_cpy(ctx0, Vcur, v));
             }
 
-            // TODO: UNVERIFIED from here on:
+            // query_layer = query_layer.transpose(1, 2).reshape(batch_size * self.num_heads, q_length, self.head_dim)
 
             struct ggml_tensor * Q =
                 ggml_permute(ctx0,
                             ggml_cpy(ctx0, Qcur,
-                                ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, n_embd/n_head, n_head, N)),
+                                ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, head_dim, n_head, N)),
                         0, 2, 1, 3);
 
-            // K = Kmem.view(n_embd/n_head, n_head, n_past + N).permute(0, 2, 1, 3)
+            // Note: for Falcon-7B num_kv == 1
+            // key_layer = key_layer.transpose(1, 2).reshape(batch_size * self.num_kv, q_length, self.head_dim)
+
             struct ggml_tensor * K =
-                ggml_permute(ctx0, ggml_reshape_3d(ctx0,
-                                ggml_view_1d(ctx0, model.memory_k, (n_past + N)*n_embd, il*n_ctx*ggml_element_size(model.memory_k)*n_embd),
-                                n_embd/n_head, n_head, n_past + N),
+                ggml_permute(ctx0,
+                            ggml_cpy(ctx0, Kcur,
+                                ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, head_dim, 1, N)),
                         0, 2, 1, 3);
+
+            // value_layer = value_layer.transpose(1, 2).reshape(batch_size * self.num_kv, q_length, self.head_dim)
+
+            struct ggml_tensor * V =
+                ggml_permute(ctx0,
+                            ggml_cpy(ctx0, Vcur,
+                                ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, head_dim, 1, N)),
+                        0, 2, 1, 3);
+
+            // TODO: verified to match layer 0 data from falcon/modelling_RW.py up to this point
+            // That is, we stand here just before self.maybe_rotary from falcon/modelling_RW.py:
+
+            //         query_layer, key_layer = self.maybe_rotary(query_layer, key_layer)
+
+            // TODO: UNVERIFIED from here on:
+            // using mode = 2 for GPT-NeoX mode
+            // TODO: the result of ggml_rope_inplace here DOES NOT match the one from modelling_RW.py!
+            // Possibly buggy, there is a remark to that effect in ggml.c
+            Q = ggml_rope_inplace(ctx0, Q, n_past, head_dim, 2);
+            K = ggml_rope_inplace(ctx0, K, n_past, head_dim, 2);
+
+            // attn_output = F.scaled_dot_product_attention(
+            //    query_layer_, key_layer_, value_layer_, None, 0.0, is_causal=True
+            // )
+            // which according to torch docs is equivalent to the following with
+            //  L = number of query vectors, S = number of key/value vectors:
+            // attn_mask = torch.ones(L, S, dtype=torch.bool).tril(diagonal=0)
+            // attn_mask = attn_mask.masked_fill(~attn_mask, -float('inf'))
+            // attn_weight = torch.softmax((Q @ K.transpose(-2, -1) / math.sqrt(Q.size(-1))) + attn_mask, dim=-1)
+            // return attn_weight @ V
+            
+            // TODO: F.scaled_dot_product_attention can somehow deal with the KQV shape as produced by the above
+            // 0,2,1,3 transposition, but the K*Q matrix multiplication below can't.. maybe the transpose should not
+            // be done in GGML version after all... the dimensions match without it (e.g. 0,1,2,3), but not sure
+            // if the results are as intended (did not check)
 
             // K * Q
             struct ggml_tensor * KQ = ggml_mul_mat(ctx0, K, Q);
@@ -673,12 +706,9 @@ bool bloom_eval(
                         ggml_new_f32(ctx0, 1.0f/sqrt(float(n_embd)/n_head))
                         );
 
-            // Alibi
-            // KQ_scaled_alibi = KQ_scaled + alibi_bias //TODO: optimize
-            struct ggml_tensor * KQ_scaled_alibi = ggml_alibi(ctx0, KQ_scaled, n_past, n_head, 0);
 
             // KQ_masked = mask_past(KQ_scaled)
-            struct ggml_tensor * KQ_masked = ggml_diag_mask_inf(ctx0, KQ_scaled_alibi, n_past);
+            struct ggml_tensor * KQ_masked = ggml_diag_mask_inf(ctx0, KQ_scaled, n_past);
 
             // KQ = soft_max(KQ_masked)
             struct ggml_tensor * KQ_soft_max = ggml_soft_max(ctx0, KQ_masked);
@@ -694,6 +724,7 @@ bool bloom_eval(
                                                           n_embd / n_head, n_head, n_past + N),
                                           1, 2, 0, 3),
                              ggml_new_tensor_3d(ctx0, model.memory_v->type, n_past + N, n_embd / n_head, n_head));
+
             // KQV = transpose(V) * KQ_soft_max
             struct ggml_tensor * KQV = ggml_mul_mat(ctx0, V_trans, KQ_soft_max);
 
